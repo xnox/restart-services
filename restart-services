@@ -5,7 +5,7 @@ for cgroup in /sys/fs/cgroup/unified/system.slice/*.service
 do
     while IFS= read -r pid
     do
-        if grep -q '(deleted)$' /proc/"$pid"/smaps
+        if sed -n 's/.* \(.*\) (deleted)/\1/p' /proc/"$pid"/smaps | grep -q -e '^/usr/' -e '^/lib/'
         then
             services_to_restart="$services_to_restart$(basename "$cgroup") "
             break
@@ -13,10 +13,34 @@ do
     done < "$cgroup"/cgroup.procs
 done
 
-if [ -n "$services_to_restart" ]
-then
-    set -x
-    echo $services_to_restart
+action=${1:-list}
+
+if [ -z "$services_to_restart" ]; then
+    exit 0
 fi
 
+echo The following services reference deleted files:
+echo $services_to_restart
 
+case $action in
+    list)
+        echo 'Use `$ sudo restart-services restart` to restart them'
+        exit 0
+        ;;
+    restart)
+        echo
+        echo Warning: restarting services may lead to user logout and loss of unsaved data
+        read -p "Do you want to restart the above listed services? (yes no, default no): " RET
+        case $RET in
+            Yes|Y|y) : ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    force) : ;;
+    *)
+        echo Unknown action
+        exit 1
+        ;;
+esac
+
+systemd-run --no-block --no-ask-passowrd --unit restart-services systemctl --no-ask-password try-restart $services_to_restart
